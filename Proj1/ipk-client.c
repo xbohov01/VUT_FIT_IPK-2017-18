@@ -41,7 +41,7 @@ void hostname_to_addr(char* hostname, char* address)
     }
 }
 
-int connect_socket(int socket, char* hostname, int port)
+void connect_socket(int socket, char* hostname, int port)
 {
     struct sockaddr_in server_address;
     //Might cause trouble if IPv6 is used
@@ -60,8 +60,28 @@ int connect_socket(int socket, char* hostname, int port)
     server_address.sin_port = htonl(port);
     server_address.sin_addr.s_addr = inet_addr(host_addr);
     memset(server_address.sin_zero, '\0', sizeof(server_address.sin_zero));
-    //TODO connects
 
+    if (connect(socket, (struct sockaddr*) &server_address, sizeof(server_address)) != 0)
+    {
+        perror("Unable to connect socket.\n");
+        exit(22);
+    }
+    return;
+}
+
+int send_msg(int dest_socket)
+{
+    int sent_chars = 0;
+    char *outbound_buffer = "Test message";
+
+    //TODO dynamic allocation based on message type
+    //Send message to server
+    sent_chars = send(dest_socket, outbound_buffer, strlen(outbound_buffer), 0);
+    if (sent_chars < 0)
+    {
+        perror("Unable to send message.\n");
+        exit(25);
+    }
 }
 
 int main (int argc, char* argv[])
@@ -143,6 +163,8 @@ int main (int argc, char* argv[])
     client_socket = get_socket();
     //Connect socket
     connect_socket(client_socket, host, port);
+
+    close(client_socket);
 
     printf("%s %d %s.\n",host, port, login);
 
