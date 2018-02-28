@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <errno.h>
 
 //Creates a new socket
 int get_socket()
@@ -57,13 +58,14 @@ void connect_socket(int socket, char* hostname, int port)
     //Credit to StackOverflow user Khan Nov 19th 2014
     //Set server address
     server_address.sin_family = AF_INET;
-    server_address.sin_port = htonl(port);
+    server_address.sin_port = htons(port);
     server_address.sin_addr.s_addr = inet_addr(host_addr);
     memset(server_address.sin_zero, '\0', sizeof(server_address.sin_zero));
 
     if (connect(socket, (struct sockaddr*) &server_address, sizeof(server_address)) != 0)
     {
-        perror("Unable to connect socket.\n");
+        perror("Unable to connect socket.");
+        //fprintf(stderr, "Unable to connect socket %d.\n", errno);
         exit(22);
     }
     return;
@@ -87,7 +89,7 @@ int send_msg(int dest_socket)
 int main (int argc, char* argv[])
 {
     char *host;
-    int port;
+    unsigned int port;
     char *login;
     //Parse arguments
     int opt;

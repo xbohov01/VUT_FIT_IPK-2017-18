@@ -28,7 +28,7 @@ struct sockaddr_in bind_socket(int socket, int port)
 
     src_sock_addr.sin_family = AF_INET;
     src_sock_addr.sin_addr.s_addr = INADDR_ANY;
-    src_sock_addr.sin_port = htonl(port);
+    src_sock_addr.sin_port = htons(port);
 
     return_val = bind(socket, (struct sockaddr*) &src_sock_addr, sizeof(src_sock_addr));
 
@@ -42,11 +42,12 @@ struct sockaddr_in bind_socket(int socket, int port)
 
 void listen_on_socket(int listen_socket)
 {
-    if (listen(listen_socket, 1) < 0)
+    if (listen(listen_socket, 1) != 0)
     {
         perror("Something went wrong during listen.\n");
         exit(23);
     }
+    fprintf(stderr, "Now listening on socket.\n");
     return;
 }
 
@@ -75,16 +76,13 @@ int accept_connection(int target_socket, struct sockaddr_in addr)
         {
             receive_message(target_socket);
         }
-        ///REMOVE THIS
-        putchar(i);
-        fgetc(stdin);
-        i++;
+        //i++;
     }
 }
 
 int main(int argc, char* argv[])
 {
-    int port;
+    unsigned int port;
     int opt;
 
     //Parse arguments
@@ -115,6 +113,8 @@ int main(int argc, char* argv[])
     //Bind socket
     struct sockaddr_in sock_address;
     sock_address = bind_socket(server_socket, port);
+
+    listen_on_socket(server_socket);
 
     accept_connection(server_socket, sock_address);
 }
