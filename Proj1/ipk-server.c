@@ -18,6 +18,10 @@ int get_socket()
         perror("Unable to create socket.");
         exit(22);
     }
+
+    int optval = 1;
+    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval , sizeof(int));
+
     return server_socket;
 }
 
@@ -26,8 +30,9 @@ struct sockaddr_in bind_socket(int socket, int port)
     struct sockaddr_in src_sock_addr;
     int return_val;
 
+    bzero((char *) &src_sock_addr, sizeof(src_sock_addr));
     src_sock_addr.sin_family = AF_INET;
-    src_sock_addr.sin_addr.s_addr = INADDR_ANY;
+    src_sock_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     src_sock_addr.sin_port = htons(port);
 
     return_val = bind(socket, (struct sockaddr*) &src_sock_addr, sizeof(src_sock_addr));
@@ -53,14 +58,28 @@ void listen_on_socket(int listen_socket)
 
 void receive_message(int rec_socket)
 {
-    char buffer[128];
+    char buffer[1024];
     int msg_len = 0;
+    memset(buffer, '\0', sizeof(buffer));
+    struct sockaddr_in client_address;
+    int client_len = sizeof(client_address);
 
-    msg_len = recv(rec_socket, buffer, 128, 0);
+    for (;;)
+    {
+        msg_len = recv(rec_socket, buffer, 1024, 0);
+        if (msg_len < 0)
+        {
+            perror("recv ");
+            exit(25);
+        }
+        else if (msg_len == 0)
+        {
+            break;
+        }
+    }
+    fprintf(stderr, "Message (%lu) received: %s.\n", strlen(buffer), buffer);
 
-    //TODO
-    printf("Message received: %s.\n", buffer);
-    exit(0);
+    return;
 }
 
 int accept_connection(int target_socket, struct sockaddr_in addr)
@@ -68,15 +87,18 @@ int accept_connection(int target_socket, struct sockaddr_in addr)
     int i = 0;
     int comm_socket;
     socklen_t addr_len = sizeof(addr);
-    while (i < 1000)
+
+    fprintf(stderr, "Waiting for message.\n");
+
+    while (42)
     {
         comm_socket = accept(target_socket, (struct sockaddr*)&addr, &addr_len);
         //Connection found
         if (comm_socket > 0)
         {
-            receive_message(target_socket);
+            receive_message(comm_socket);
+            fprintf(stderr, "Message done.\n");
         }
-        //i++;
     }
 }
 

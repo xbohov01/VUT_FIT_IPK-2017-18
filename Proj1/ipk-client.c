@@ -9,6 +9,14 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <errno.h>
+#include <time.h>
+
+typedef enum
+{
+    name,
+    folder,
+    list
+} protocol_opt;
 
 //Creates a new socket
 int get_socket()
@@ -65,16 +73,15 @@ void connect_socket(int socket, char* hostname, int port)
     if (connect(socket, (struct sockaddr*) &server_address, sizeof(server_address)) != 0)
     {
         perror("Unable to connect socket.");
-        //fprintf(stderr, "Unable to connect socket %d.\n", errno);
         exit(22);
     }
     return;
 }
 
-int send_msg(int dest_socket)
+int send_msg(int dest_socket, char* msg_content)
 {
     int sent_chars = 0;
-    char *outbound_buffer = "Test message";
+    char *outbound_buffer;
 
     //TODO dynamic allocation based on message type
     //Send message to server
@@ -86,6 +93,53 @@ int send_msg(int dest_socket)
     }
 }
 
+///TODO actual hash???
+//Hash function for authorization
+unsigned int hash(unsigned int in)
+{
+    return in;
+}
+
+//Represents the protocol's FSM
+int my_protocol(int client_socket, char* login, protocol_opt option)
+{
+    char* msg_buffer;
+    int msg_len;
+
+    ///Send authorization message
+    /******************************************************/
+    //Authorization message contains a number and it's hash
+    srand(time(NULL));
+    unsigned int hash_in = rand();
+    unsigned int hash_out = hash(hash_in);
+
+    //convert to string
+    int hash_length = snprintf( NULL, 0, "%d", hash_in);
+    char *hash_in_chr = malloc(hash_length + 1);
+    snprintf( hash_in_chr, hash_length + 1, "%d", hash_in);
+
+    hash_length = snprintf( NULL, 0, "%d", hash_out);
+    char *hash_out_chr = malloc(hash_length +1);
+    snprintf( hash_out_chr, hash_length + 1, "%d", hash_out);
+
+    fprintf(stderr, "Requesting authorization with server with hash %s\n", hash_out_chr);
+
+    //Compose auth message
+    msg_len = (strlen(hash_in_chr) + strlen(hash_out_chr));
+    msg_buffer = malloc(msg_len+3);
+    bzero(msg_buffer, sizeof(msg_buffer));
+    strcat(msg_buffer, hash_in_chr);
+    strcat(msg_buffer, "$");
+    strcat(msg_buffer, hash_out_chr);
+    free(hash_in_chr);
+    free(hash_out_chr);
+
+    printf("DEBUG msg_buffer >>> %s\n", msg_buffer);
+    /******************************************************/
+
+    free(msg_buffer);
+}
+
 int main (int argc, char* argv[])
 {
     char *host;
@@ -94,9 +148,7 @@ int main (int argc, char* argv[])
     //Parse arguments
     int opt;
     bool option_used = false;
-    bool full_name = false;
-    bool home_folder = false;
-    bool user_list = false;
+    protocol_opt option;
     if (argc < 5)
     {
         perror("Not enough arguments.\n");
@@ -116,7 +168,7 @@ int main (int argc, char* argv[])
             if (option_used == false)
             {
                 login = optarg;
-                full_name = true;
+                option = name;
                 option_used = true;
             }
             else
@@ -129,7 +181,7 @@ int main (int argc, char* argv[])
             if (option_used == false)
             {
                 login = optarg;
-                home_folder = true;
+                option = folder;
                 option_used = true;
             }
             else
@@ -142,7 +194,7 @@ int main (int argc, char* argv[])
             if (option_used == false)
             {
                 login = argv[optind];
-                home_folder = true;
+                option = list;
                 option_used = true;
             }
             else
@@ -165,10 +217,14 @@ int main (int argc, char* argv[])
     client_socket = get_socket();
     //Connect socket
     connect_socket(client_socket, host, port);
+    fprintf(stderr, "Connection to server started.\n");
+
+    //Connection is OK, start protocol
+
+    //send_msg(client_socket);
+    my_protocol(client_socket, login, option);
 
     close(client_socket);
-
-    printf("%s %d %s.\n",host, port, login);
 
     return 0;
 }
