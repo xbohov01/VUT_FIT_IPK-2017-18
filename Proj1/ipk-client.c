@@ -10,6 +10,7 @@
 #include <netdb.h>
 #include <errno.h>
 #include <time.h>
+#include <fcntl.h>
 
 typedef enum
 {
@@ -81,16 +82,32 @@ void connect_socket(int socket, char* hostname, int port)
 int send_msg(int dest_socket, char* msg_content)
 {
     int sent_chars = 0;
-    char *outbound_buffer;
 
-    //TODO dynamic allocation based on message type
+    printf("DEBUG msg_content >>> %s\n", msg_content);
+
     //Send message to server
-    sent_chars = send(dest_socket, outbound_buffer, strlen(outbound_buffer), 0);
+    sent_chars = send(dest_socket, msg_content, strlen(msg_content), 0);
     if (sent_chars < 0)
     {
         perror("Unable to send message.\n");
         exit(25);
     }
+
+}
+
+//Message reception interface
+int rec_msg(int src_socket, char *incoming_buffer, int max_len)
+{
+    int msg_len = 0;
+        printf("here\n");
+        msg_len = recv(src_socket, incoming_buffer, sizeof(incoming_buffer), 0);
+        if (msg_len < 0)
+        {
+            perror("Client recv.");
+        }
+
+    fprintf(stderr, "DEBUG incoming_buffer >> %s\n", incoming_buffer);
+    return msg_len;
 }
 
 ///TODO actual hash???
@@ -101,7 +118,7 @@ unsigned int hash(unsigned int in)
 }
 
 //Represents the protocol's FSM
-int my_protocol(int client_socket, char* login, protocol_opt option)
+int my_client_protocol(int client_socket, char* login, protocol_opt option)
 {
     char* msg_buffer;
     int msg_len;
@@ -131,11 +148,44 @@ int my_protocol(int client_socket, char* login, protocol_opt option)
     strcat(msg_buffer, hash_in_chr);
     strcat(msg_buffer, "$");
     strcat(msg_buffer, hash_out_chr);
+    strcat(msg_buffer, "&");
     free(hash_in_chr);
     free(hash_out_chr);
 
-    printf("DEBUG msg_buffer >>> %s\n", msg_buffer);
+    //Send
+    send_msg(client_socket, msg_buffer);
+    //Close to end message
+    close(client_socket);
+
+    ///Expect OK message
     /******************************************************/
+    fprintf(stderr, "Waiting for OK message.\n");
+
+    bzero(msg_buffer, sizeof(msg_buffer));
+
+    ///TODO FIX THIS!!!!!
+    client_socket = get_socket();
+    connect_socket(client_socket, "localhost", 55555);
+
+    rec_msg(client_socket, msg_buffer, 8);
+
+    printf("msg buffer >>>> %s\n", msg_buffer);
+
+    if (strcasecmp(msg_buffer, "ok&") != 0)
+    {
+        perror("OK message not received.");
+        //close(client_socket);
+        //exit(26);
+    }
+
+
+    fprintf(stderr, "OK message received -- sending data request.\n");
+
+    bzero(msg_buffer, sizeof(msg_buffer));
+    strcat(msg_buffer, login);
+    strcat(msg_buffer, "&");
+    send_msg(client_socket, msg_buffer);
+    close(client_socket);
 
     free(msg_buffer);
 }
@@ -217,12 +267,10 @@ int main (int argc, char* argv[])
     client_socket = get_socket();
     //Connect socket
     connect_socket(client_socket, host, port);
-    fprintf(stderr, "Connection to server started.\n");
+    fprintf(stderr, "Connection to server started -- starting protocol.\n");
 
     //Connection is OK, start protocol
-
-    //send_msg(client_socket);
-    my_protocol(client_socket, login, option);
+    my_client_protocol(client_socket, login, option);
 
     close(client_socket);
 

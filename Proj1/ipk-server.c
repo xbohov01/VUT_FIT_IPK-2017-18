@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <fcntl.h>
 
 //Creates a new socket
 int get_socket()
@@ -56,17 +57,66 @@ void listen_on_socket(int listen_socket)
     return;
 }
 
-void receive_message(int rec_socket)
+//Gets next message in buffer
+//Returns length of message
+int get_message(char *buffer, char* message)
 {
-    char buffer[1024];
-    int msg_len = 0;
-    memset(buffer, '\0', sizeof(buffer));
-    struct sockaddr_in client_address;
-    int client_len = sizeof(client_address);
+    char *c = malloc(sizeof(char));
+    if (strlen(buffer) == 0)
+    {
+        free(c);
+        return 0;
+    }
+    bzero(message, sizeof(message));
+    for (int i = 0; i < strlen(buffer); i++)
+    {
+        c[0] = buffer[i];
+        if (c[0] == '&')
+        {
+            strcat(message, "\0");
+            //shift buffer
+            memcpy(buffer, &buffer[i+1], (strlen(buffer)-i));
+            free(c);
+            if (strchr(buffer, '&') == NULL)
+            {
+                memset(buffer, '\0', sizeof(buffer));
+            }
+            return i;
+        }
+        else
+        {
+            printf("%s\n", c);
+            strcat(message, c);
+        }
+    }
+}
 
+void receive_message(int rec_socket, char* incoming_message)
+{
+    static char *buffer;
+    char *message;
+    message = malloc(128);
+    if (buffer == NULL)
+    {
+        buffer = malloc(1024);
+        memset(buffer, '\0', sizeof(buffer));
+    }
+
+
+
+    if (get_message(buffer, message) > 0)
+    {
+        fprintf(stderr, "Message (%lu) received: %s.\n", strlen(message), message);
+        return;
+    }
+
+    memset(buffer, '\0', sizeof(buffer));
+    int msg_len = 0;
+
+    //No messages left in buffer, listen for new message
     for (;;)
     {
-        msg_len = recv(rec_socket, buffer, 1024, 0);
+        msg_len = recv(rec_socket, incoming_message, 1024, 0);
         if (msg_len < 0)
         {
             perror("recv ");
@@ -76,10 +126,119 @@ void receive_message(int rec_socket)
         {
             break;
         }
-    }
-    fprintf(stderr, "Message (%lu) received: %s.\n", strlen(buffer), buffer);
 
+    }
+    strcat(message, "\0");
+    strcat(buffer, message);
+    //get_message(buffer, message);
+    fprintf(stderr, "Message (%lu) received: %s.\n", strlen(message), incoming_message);
+
+    free(message);
     return;
+}
+
+int send_message(int send_socket, char* outgoing_buffer)
+{
+    int sent_chars = 0;
+
+    printf("DEBUG outgoing_buffer >>> %s\n", outgoing_buffer);
+
+    //Send message to server
+    sent_chars = send(send_socket, outgoing_buffer, strlen(outgoing_buffer), MSG_EOR);
+    if (sent_chars < 0)
+    {
+        perror("Unable to send message.\n");
+        exit(25);
+    }
+}
+
+///TODO actual hash???
+//Hash function for authorization
+unsigned int hash(unsigned int in)
+{
+    return in;
+}
+
+int my_server_protocol(int server_socket)
+{
+    char *msg_buffer;
+    msg_buffer = malloc(1024);
+    memset(msg_buffer, '\0', sizeof(msg_buffer));
+
+    ///Check hash
+    /*************************************************************/
+    fprintf(stderr, "Reading hash from client.\n");
+    receive_message(server_socket, msg_buffer);
+
+    unsigned int number;
+    unsigned int hash_in;
+    int divider;
+    char number_chr[20];
+    char hash_chr[20];
+
+    ///TODO remake to dynamic
+    //Split message
+    for (int i = 0; i < strlen(msg_buffer); i++)
+    {
+        if (msg_buffer[i] == '$')
+        {
+            divider = i+1;
+            number_chr[i] = '\0';
+            break;
+        }
+        else
+        {
+            number_chr[i] = msg_buffer[i];
+        }
+    }
+    int j = 0;
+    memset(hash_chr, '\0', sizeof(hash_chr));
+    for (int i = divider; i < strlen(msg_buffer); i++)
+    {
+        if (msg_buffer[i] == '\0')
+        {
+            hash_chr[j] = '\0';
+            break;
+        }
+        hash_chr[j] = msg_buffer[i];
+        j++;
+    }
+
+    hash_in = atoi(hash_chr);
+    number = atoi(number_chr);
+
+    fprintf(stderr, "Hash read -- checking now.\n");
+
+    unsigned int hash_ref;
+    hash_ref = hash(number);
+    if (hash_ref == hash_in)
+    {
+        fprintf(stderr, "Hash checks out -- ready for request.\n");
+    }
+    else
+    {
+        fprintf(stderr, "Hash failure -- closing connection.\n");
+        close(server_socket);
+    }
+
+    ///Ask for data request
+    /*************************************************************/
+    fprintf(stderr, "Asking client for data request.\n");
+    memset(msg_buffer, '\0', sizeof(msg_buffer));
+
+    strcat(msg_buffer, "ok&");
+
+    send_message(server_socket, msg_buffer);
+
+    fprintf(stderr, "Waiting for data request.\n");
+
+    receive_message(server_socket, msg_buffer);
+
+    ///Get data
+    /*************************************************************/
+
+    //fprintf(stderr, "DEBUG msg_buffer >>>>> %s\n", msg_buffer);
+    return 0;
 }
 
 int accept_connection(int target_socket, struct sockaddr_in addr)
@@ -93,11 +252,12 @@ int accept_connection(int target_socket, struct sockaddr_in addr)
     while (42)
     {
         comm_socket = accept(target_socket, (struct sockaddr*)&addr, &addr_len);
-        //Connection found
+        //Client has connected
         if (comm_socket > 0)
         {
-            receive_message(comm_socket);
-            fprintf(stderr, "Message done.\n");
+            fprintf(stderr, "Incoming connection -- starting protocol now.\n");
+            my_server_protocol(comm_socket);
+            fprintf(stderr, "Protocol done -- ready for next connection.\n");
         }
     }
 }
@@ -138,5 +298,6 @@ int main(int argc, char* argv[])
 
     listen_on_socket(server_socket);
 
-    accept_connection(server_socket, sock_address);
+    //accept_connection(server_socket, sock_address);
+    my_server_protocol(server_socket, port, sock_address);
 }
