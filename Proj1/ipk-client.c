@@ -107,33 +107,45 @@ int send_msg(int dest_socket, char* msg_content)
     //Buffer for data
     //Size of data
     //Is a number expected
-int rec_msg(int src_socket, char *incoming_buffer, int exp_size, bool exp_num)
+int rec_msg(int src_socket, char *incoming_buffer, int exp_size, int buff_size)
 {
     int msg_len = 0;
-    int size;
+    int len = 0;
+    int cnt = 100;
+    int num = 0;
     for (;;)
     {
-        msg_len = recv(src_socket, incoming_buffer, 1024, 0);
-        if (exp_num == true)
-        {
-            size = sizeof(atoi(incoming_buffer));
-        }
-        if (size == exp_size)
+        msg_len = recv(src_socket, incoming_buffer, exp_size*sizeof(char), 0);
+        if (atoi(incoming_buffer) > 0)
         {
             break;
         }
-        if (msg_len < 0)
+        if (msg_len < 0 && errno != EWOULDBLOCK && errno != EAGAIN)
         {
             perror("recv ");
             exit(25);
         }
         else if (msg_len == 0)
         {
-            break;
+            cnt--;
+            if (cnt == 0)
+            {
+                fprintf(stderr, "here\n");
+                break;
+            }
+            if ((len = strlen(incoming_buffer)) == exp_size)
+            {
+                fprintf(stderr, "here>>>>\n");
+                break;
+            }
+            if (len < exp_size)
+            {
+                continue;
+            }
         }
     }
 
-    //fprintf(stderr, "DEBUG incoming_buffer >> %s\n", incoming_buffer);
+    fprintf(stderr, "DEBUG incoming_buffer >> %s\n", incoming_buffer);
     return msg_len;
 }
 
@@ -220,7 +232,7 @@ int my_client_protocol(int client_socket, char* login, char *host, int port, pro
     msg_buffer = realloc(msg_buffer, 10*sizeof(char));
     memset(msg_buffer, '\0', 10*sizeof(char));
 
-    rec_msg(client_socket, msg_buffer, sizeof(int), true);
+    rec_msg(client_socket, msg_buffer, 10*sizeof(char), 10*sizeof(char));
 
     int data_len = atoi(msg_buffer);
 
@@ -228,15 +240,17 @@ int my_client_protocol(int client_socket, char* login, char *host, int port, pro
 
     //Allocate buffer for incoming data
     //One extra byte is for \0
-    msg_buffer = realloc(msg_buffer, data_len+1);
+    msg_buffer = realloc(msg_buffer, (data_len+1)*sizeof(char));
     memset(msg_buffer, '\0', (data_len+1)*sizeof(char));
 
     fprintf(stderr, "Ready for data\n");
 
     //Data
-    rec_msg(client_socket, msg_buffer, data_len, false);
+    rec_msg(client_socket, msg_buffer, data_len, (data_len+1*sizeof(char)));
 
     printf("%s\n", msg_buffer);
+
+    fprintf(stderr, ">>>>>%lu %lu\n", strlen(msg_buffer), data_len*sizeof(char));
 
     close(client_socket);
     free(msg_buffer);
