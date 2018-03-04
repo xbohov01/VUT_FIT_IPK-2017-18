@@ -406,7 +406,7 @@ int my_server_protocol(int server_socket)
                 }
                 else
                 {
-                    buffer_len += 100;
+                    buffer_len += 1000;
                     msg_buffer = realloc(msg_buffer, buffer_len*sizeof(char));
                     strcat(msg_buffer, passwd_file->pw_name);
                 }
@@ -415,6 +415,7 @@ int my_server_protocol(int server_socket)
 
         }
 
+        strcat(msg_buffer, "\0");
         //Close the stream
         endpwent();
     }
@@ -427,6 +428,8 @@ int my_server_protocol(int server_socket)
     char* data_len_str = malloc(10 * sizeof(char));
     memset(data_len_str, '\0', 10 * sizeof(char));
     sprintf(data_len_str, "%d", data_len);
+
+    fprintf(stderr, "Data length = %d\n", data_len);
 
     //Send data lenght
     send_message(server_socket, data_len_str);
