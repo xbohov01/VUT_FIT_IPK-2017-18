@@ -443,6 +443,8 @@ int my_server_protocol(int server_socket)
     //Send data
     send_message(server_socket, msg_buffer);
 
+    sleep(1);
+
     fprintf(stderr, "Data sent.\n");
 
     //Free resources
