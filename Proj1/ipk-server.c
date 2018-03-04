@@ -8,7 +8,14 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <fcntl.h>
+#include <pwd.h>
+
+typedef enum
+{
+    name,
+    folder,
+    list
+} protocol_opt;
 
 //Creates a new socket
 int get_socket()
@@ -93,27 +100,11 @@ int get_message(char *buffer, char* message)
 
 void receive_message(int rec_socket, char* incoming_message)
 {
-    static char *buffer;
-    char *message;
-    message = malloc(128);
-    if (buffer == NULL)
-    {
-        buffer = malloc(1024);
-        memset(buffer, '\0', sizeof(buffer));
-    }
-
-
-
-    if (get_message(buffer, message) > 0)
-    {
-        fprintf(stderr, "Message (%lu) received: %s.\n", strlen(message), message);
-        return;
-    }
-
-    memset(buffer, '\0', sizeof(buffer));
     int msg_len = 0;
 
-    //No messages left in buffer, listen for new message
+    //Erase message buffer
+    memset(incoming_message, '\0', strlen(incoming_message));
+
     for (;;)
     {
         msg_len = recv(rec_socket, incoming_message, 1024, 0);
@@ -128,12 +119,25 @@ void receive_message(int rec_socket, char* incoming_message)
         }
 
     }
-    strcat(message, "\0");
-    strcat(buffer, message);
-    //get_message(buffer, message);
-    fprintf(stderr, "Message (%lu) received: %s.\n", strlen(message), incoming_message);
 
-    free(message);
+    //Truncate buffer if something was left from last message
+    bool end = false;
+    for (int i = 0; i < strlen(incoming_message); i++)
+    {
+        if (incoming_message[i] == '&')
+        {
+            end = true;
+            i++;
+        }
+        if (end == true)
+        {
+            incoming_message[i] = '\0';
+        }
+    }
+
+    //get_message(buffer, message);
+    fprintf(stderr, "Message (%lu) received: %s.\n", strlen(incoming_message), incoming_message);
+
     return;
 }
 
@@ -141,14 +145,33 @@ int send_message(int send_socket, char* outgoing_buffer)
 {
     int sent_chars = 0;
 
-    printf("DEBUG outgoing_buffer >>> %s\n", outgoing_buffer);
+    fprintf(stderr,"DEBUG outgoing_buffer >>> %s\n", outgoing_buffer);
 
     //Send message to server
-    sent_chars = send(send_socket, outgoing_buffer, strlen(outgoing_buffer), MSG_EOR);
+    sent_chars = send(send_socket, outgoing_buffer, strlen(outgoing_buffer), 0);
     if (sent_chars < 0)
     {
         perror("Unable to send message.\n");
         exit(25);
+    }
+}
+
+int accept_connection(int target_socket, struct sockaddr_in addr)
+{
+    int i = 0;
+    int comm_socket;
+    socklen_t addr_len = sizeof(addr);
+
+    fprintf(stderr, "Waiting for message.\n");
+
+    while (42)
+    {
+        comm_socket = accept(target_socket, (struct sockaddr*)&addr, &addr_len);
+        //Client has connected
+        if (comm_socket > 0)
+        {
+            return comm_socket;
+        }
     }
 }
 
@@ -159,15 +182,17 @@ unsigned int hash(unsigned int in)
     return in;
 }
 
-int my_server_protocol(int server_socket)
+int my_server_protocol(int server_socket, int port, struct sockaddr_in sock_address)
 {
     char *msg_buffer;
-    msg_buffer = malloc(1024);
+    int buffer_len = 1024;
+    msg_buffer = malloc(buffer_len*sizeof(char));
     memset(msg_buffer, '\0', sizeof(msg_buffer));
 
     ///Check hash
     /*************************************************************/
-    fprintf(stderr, "Reading hash from client.\n");
+    fprintf(stderr, "Checking hash from client.\n");
+    //receive_message(server_socket, msg_buffer);
     receive_message(server_socket, msg_buffer);
 
     unsigned int number;
@@ -207,8 +232,6 @@ int my_server_protocol(int server_socket)
     hash_in = atoi(hash_chr);
     number = atoi(number_chr);
 
-    fprintf(stderr, "Hash read -- checking now.\n");
-
     unsigned int hash_ref;
     hash_ref = hash(number);
     if (hash_ref == hash_in)
@@ -221,45 +244,180 @@ int my_server_protocol(int server_socket)
         close(server_socket);
     }
 
-    ///Ask for data request
+    ///Reading data request
     /*************************************************************/
-    fprintf(stderr, "Asking client for data request.\n");
-    memset(msg_buffer, '\0', sizeof(msg_buffer));
+    fprintf(stderr, "Reading data request.\n");
 
-    strcat(msg_buffer, "ok&");
+    //Message format > (0-9)*$(0-9)*$[xlogin00|name]$[N|F|L]
+    bool name = false;
+    bool folder = false;
+    bool list = false;
+    char *name_login = malloc(50*sizeof(char));
+    memset(name_login, '\0', 50*sizeof(char));
+    int delims_found = 0;
+    int k = 0;
 
-    send_message(server_socket, msg_buffer);
+    for (int i = 0; i < strlen(msg_buffer); i++)
+    {
+        if (msg_buffer[i] == '$')
+        {
+            delims_found++;
+            continue;
+        }
 
-    fprintf(stderr, "Waiting for data request.\n");
+        if (delims_found < 2)
+        {
+            continue;
+        }
 
-    receive_message(server_socket, msg_buffer);
+        if (delims_found == 2)
+        {
+            if (msg_buffer[i] == '@')
+            {
+                continue;
+            }
+            name_login[k] = msg_buffer[i];
+            name_login[k+1] = '\0';
+            k++;
+        }
+        if (delims_found == 3)
+        {
+            if (msg_buffer[i] == 'N')
+            {
+                name = true;
+            }
+            else if (msg_buffer[i] == 'F')
+            {
+                folder = true;
+            }
+            else if (msg_buffer[i] == 'L')
+            {
+                list = true;
+            }
+        }
+
+    }
+
+    fprintf(stderr, "Data request read -- getting data.\n");
 
     ///Get data
     /*************************************************************/
+    int size = 200;
+    int line_len = 0;
+    char *line = malloc(size*sizeof(char));
+    memset(line, '\0', size*sizeof(char));
+    memset(msg_buffer, '\0', buffer_len);
 
-    //fprintf(stderr, "DEBUG msg_buffer >>>>> %s\n", msg_buffer);
-    return 0;
-}
+    struct passwd *passwd_file = NULL;
 
-int accept_connection(int target_socket, struct sockaddr_in addr)
-{
-    int i = 0;
-    int comm_socket;
-    socklen_t addr_len = sizeof(addr);
-
-    fprintf(stderr, "Waiting for message.\n");
-
-    while (42)
+    //Get data
+    if (name == true)
     {
-        comm_socket = accept(target_socket, (struct sockaddr*)&addr, &addr_len);
-        //Client has connected
-        if (comm_socket > 0)
+        passwd_file = getpwnam(name_login);
+        if (passwd_file == NULL)
         {
-            fprintf(stderr, "Incoming connection -- starting protocol now.\n");
-            my_server_protocol(comm_socket);
-            fprintf(stderr, "Protocol done -- ready for next connection.\n");
+            printf ("Can't open passwd file.\n");
+            exit (28);
         }
+        fprintf(stderr, "Getting data for user: %s\n", name_login);
+
+        memcpy(line, passwd_file->pw_gecos, strlen(passwd_file->pw_gecos));
+        strcat(line, "\0");
+
+        strcat(msg_buffer, line);
+
+        fprintf(stderr, "Data ready.\n");
     }
+    else if (folder == true)
+    {
+        passwd_file = getpwnam(name_login);
+        if (passwd_file == NULL)
+        {
+            printf ("Can't open passwd file.\n");
+            exit (28);
+        }
+        fprintf(stderr, "Getting home folder for user: %s\n", name_login);
+
+        memcpy(line, passwd_file->pw_dir, strlen(passwd_file->pw_dir));
+        strcat(line, "\0");
+
+        strcat(msg_buffer, line);
+
+        fprintf(stderr, "Data ready.\n");
+    }
+    else if (list == true)
+    {
+        //Opens stream to read list of users
+        setpwent();
+        //Get entries
+        //Returns NULL when there are no more entries
+        while ((passwd_file = getpwent()) != NULL)
+        {
+            //Login filter
+            if (strstr(passwd_file->pw_name, name_login) == NULL)
+            {
+                continue;
+            }
+            //Get username
+            if (strlen(msg_buffer) == 0)
+            {
+                //Buffer is blank so first entry is copied
+                memcpy(msg_buffer, passwd_file->pw_name, strlen(passwd_file->pw_name));
+                strcat(msg_buffer, "\n");
+            }
+            else
+            {
+                //Other entries can be concatenated
+                //Have to check if buffer has enough space
+                if ((strlen(msg_buffer)+strlen(passwd_file->pw_name)) < (buffer_len*sizeof(char)))
+                {
+                    strcat(msg_buffer, passwd_file->pw_name);
+                }
+                else
+                {
+                    buffer_len += 100;
+                    msg_buffer = realloc(msg_buffer, buffer_len*sizeof(char));
+                    strcat(msg_buffer, passwd_file->pw_name);
+                }
+                strcat(msg_buffer, "\n");
+            }
+
+        }
+
+        //Close the stream
+        endpwent();
+    }
+
+    ///Prepare data for sending
+    /**************************************************************/
+    //Prepare message with data length
+    int data_len;
+    data_len = strlen(msg_buffer);
+    char* data_len_str = malloc(10 * sizeof(char));
+    memset(data_len_str, '\0', 10 * sizeof(char));
+    sprintf(data_len_str, "%d", data_len);
+
+    //Send data lenght
+    send_message(server_socket, data_len_str);
+
+    fprintf(stderr, "Data size message sent -- sending data.\n");
+
+    //Give client time to get ready
+    sleep(1);
+
+    //Send data
+    send_message(server_socket, msg_buffer);
+
+    fprintf(stderr, "Data sent.\n");
+
+    //Free resources
+    free(data_len_str);
+    free(name_login);
+    free(line);
+    free(msg_buffer);
+
+    close(server_socket);
+    return 0;
 }
 
 int main(int argc, char* argv[])
@@ -298,6 +456,25 @@ int main(int argc, char* argv[])
 
     listen_on_socket(server_socket);
 
-    //accept_connection(server_socket, sock_address);
-    my_server_protocol(server_socket, port, sock_address);
+    while(42)
+    {
+        int act_socket = accept_connection(server_socket, sock_address);
+        //Create a child to handle new connection
+        int pid = fork();
+        if (pid == 0)
+        {
+            int child_pid = getpid();
+            close(server_socket);
+            fprintf(stderr, "Starting protocol now -- handled by: %d.\n", child_pid);
+            my_server_protocol(act_socket, port, sock_address);
+            fprintf(stderr, "Protocol done -- ready for next connection -- handled by: %d.\n", child_pid);
+            exit(0);
+        }
+        else
+        {
+            close(act_socket);
+        }
+    }
+
+
 }

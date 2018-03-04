@@ -62,9 +62,6 @@ void connect_socket(int socket, char* hostname, int port)
 
     fprintf(stderr, "Resolved host name %s to IP %s connecting now at port %d.\n", hostname, host_addr, port);
 
-    //This section of code is inspired by:
-    //https://stackoverflow.com/questions/27014955/socket-connect-vs-bind
-    //Credit to StackOverflow user Khan Nov 19th 2014
     //Set server address
     server_address.sin_family = AF_INET;
     server_address.sin_port = htons(port);
@@ -96,17 +93,37 @@ int send_msg(int dest_socket, char* msg_content)
 }
 
 //Message reception interface
-int rec_msg(int src_socket, char *incoming_buffer, int max_len)
+    //Socket that will receive data
+    //Buffer for data
+    //Size of data
+    //Is a number expected
+int rec_msg(int src_socket, char *incoming_buffer, int exp_size, bool exp_num)
 {
     int msg_len = 0;
-        printf("here\n");
-        msg_len = recv(src_socket, incoming_buffer, sizeof(incoming_buffer), 0);
+    int size;
+    for (;;)
+    {
+        msg_len = recv(src_socket, incoming_buffer, 1024, 0);
+        if (exp_num == true)
+        {
+            size = sizeof(atoi(incoming_buffer));
+        }
+        if (size == exp_size)
+        {
+            break;
+        }
         if (msg_len < 0)
         {
-            perror("Client recv.");
+            perror("recv ");
+            exit(25);
         }
+        else if (msg_len == 0)
+        {
+            break;
+        }
+    }
 
-    fprintf(stderr, "DEBUG incoming_buffer >> %s\n", incoming_buffer);
+    //fprintf(stderr, "DEBUG incoming_buffer >> %s\n", incoming_buffer);
     return msg_len;
 }
 
@@ -118,12 +135,12 @@ unsigned int hash(unsigned int in)
 }
 
 //Represents the protocol's FSM
-int my_client_protocol(int client_socket, char* login, protocol_opt option)
+int my_client_protocol(int client_socket, char* login, char *host, int port, protocol_opt option)
 {
     char* msg_buffer;
     int msg_len;
 
-    ///Send authorization message
+    ///Authorization part
     /******************************************************/
     //Authorization message contains a number and it's hash
     srand(time(NULL));
@@ -142,51 +159,76 @@ int my_client_protocol(int client_socket, char* login, protocol_opt option)
     fprintf(stderr, "Requesting authorization with server with hash %s\n", hash_out_chr);
 
     //Compose auth message
-    msg_len = (strlen(hash_in_chr) + strlen(hash_out_chr));
-    msg_buffer = malloc(msg_len+3);
-    bzero(msg_buffer, sizeof(msg_buffer));
-    strcat(msg_buffer, hash_in_chr);
+    if (login != NULL)
+    {
+        msg_len = (strlen(hash_in_chr) + strlen(hash_out_chr) + strlen(login));
+    }
+    else
+    {
+        msg_len = (strlen(hash_in_chr) + strlen(hash_out_chr));
+    }
+    msg_buffer = malloc((msg_len+7)*sizeof(char));
+    memset(msg_buffer, '\0', sizeof(char)*(msg_len+7));
+    memcpy(msg_buffer, hash_in_chr, strlen(hash_in_chr));
     strcat(msg_buffer, "$");
     strcat(msg_buffer, hash_out_chr);
-    strcat(msg_buffer, "&");
+    strcat(msg_buffer, "$");
     free(hash_in_chr);
     free(hash_out_chr);
 
-    //Send
-    send_msg(client_socket, msg_buffer);
-    //Close to end message
-    close(client_socket);
+    ///Data request part
+    /****************************************************/
 
-    ///Expect OK message
-    /******************************************************/
-    fprintf(stderr, "Waiting for OK message.\n");
-
-    bzero(msg_buffer, sizeof(msg_buffer));
-
-    ///TODO FIX THIS!!!!!
-    client_socket = get_socket();
-    connect_socket(client_socket, "localhost", 55555);
-
-    rec_msg(client_socket, msg_buffer, 8);
-
-    printf("msg buffer >>>> %s\n", msg_buffer);
-
-    if (strcasecmp(msg_buffer, "ok&") != 0)
+    if (login != NULL)
     {
-        perror("OK message not received.");
-        //close(client_socket);
-        //exit(26);
+        strcat(msg_buffer, login);
+    }
+    strcat(msg_buffer, "$");
+
+    switch(option)
+    {
+        case folder :
+            strcat(msg_buffer, "F");
+            break;
+        case name :
+            strcat(msg_buffer, "N");
+            break;
+        case list :
+            strcat(msg_buffer, "L");
+            break;
     }
 
-
-    fprintf(stderr, "OK message received -- sending data request.\n");
-
-    bzero(msg_buffer, sizeof(msg_buffer));
-    strcat(msg_buffer, login);
+    //End of message delimiter
     strcat(msg_buffer, "&");
-    send_msg(client_socket, msg_buffer);
-    close(client_socket);
 
+    send_msg(client_socket, msg_buffer);
+    shutdown(client_socket, SHUT_WR);
+
+    ///Receive data
+    /***************************************************/
+    //Data size
+    msg_buffer = realloc(msg_buffer, 10*sizeof(char));
+    memset(msg_buffer, '\0', 10*sizeof(char));
+
+    rec_msg(client_socket, msg_buffer, sizeof(int), true);
+
+    int data_len = atoi(msg_buffer);
+
+    fprintf(stderr, "Received data length from server %d\n", data_len);
+
+    //Allocate buffer for incoming data
+    //One extra byte is for \0
+    msg_buffer = realloc(msg_buffer, data_len+1);
+    memset(msg_buffer, '\0', (data_len+1)*sizeof(char));
+
+    fprintf(stderr, "Ready for data\n");
+
+    //Data
+    rec_msg(client_socket, msg_buffer, data_len, false);
+
+    printf("%s\n", msg_buffer);
+
+    close(client_socket);
     free(msg_buffer);
 }
 
@@ -270,7 +312,7 @@ int main (int argc, char* argv[])
     fprintf(stderr, "Connection to server started -- starting protocol.\n");
 
     //Connection is OK, start protocol
-    my_client_protocol(client_socket, login, option);
+    my_client_protocol(client_socket, login, host, port, option);
 
     close(client_socket);
 
