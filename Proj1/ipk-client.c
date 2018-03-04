@@ -1,3 +1,13 @@
+/*
+ipk-client.c
+Samuel Bohovic
+xbohov01
+
+Copyright notice:
+Various parts of code are inspired by DEMO source codes provided.
+Linux man pages were used for getting information of functions used.
+*/
+
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>

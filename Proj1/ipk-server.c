@@ -1,3 +1,12 @@
+/*
+ipk-server.c
+Samuel Bohovic
+xbohov01
+
+Copyright notice:
+Various parts of code are inspired by DEMO source codes provided.
+Linux man pages were used for getting information of functions used.
+*/
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -33,6 +42,7 @@ int get_socket()
     return server_socket;
 }
 
+//Binds socket
 struct sockaddr_in bind_socket(int socket, int port)
 {
     struct sockaddr_in src_sock_addr;
@@ -53,6 +63,7 @@ struct sockaddr_in bind_socket(int socket, int port)
     return src_sock_addr;
 }
 
+//Designates socket to listen
 void listen_on_socket(int listen_socket)
 {
     if (listen(listen_socket, 1) != 0)
@@ -98,6 +109,8 @@ int get_message(char *buffer, char* message)
     }
 }
 
+//Handles reception of messages
+//Ensures no fragments of previous messages stay in buffer
 void receive_message(int rec_socket, char* incoming_message)
 {
     int msg_len = 0;
@@ -135,17 +148,17 @@ void receive_message(int rec_socket, char* incoming_message)
         }
     }
 
-    //get_message(buffer, message);
-    fprintf(stderr, "Message (%lu) received: %s.\n", strlen(incoming_message), incoming_message);
+    //fprintf(stderr, "Message (%lu) received: %s.\n", strlen(incoming_message), incoming_message);
 
     return;
 }
 
+//Sends message from server
 int send_message(int send_socket, char* outgoing_buffer)
 {
     int sent_chars = 0;
 
-    fprintf(stderr,"DEBUG outgoing_buffer >>> %s\n", outgoing_buffer);
+    //fprintf(stderr,"DEBUG outgoing_buffer >>> %s\n", outgoing_buffer);
 
     //Send message to server
     sent_chars = send(send_socket, outgoing_buffer, strlen(outgoing_buffer), 0);
@@ -156,13 +169,15 @@ int send_message(int send_socket, char* outgoing_buffer)
     }
 }
 
+//Listens for incoming connections
+//Incoming connection is given a active socket to use
 int accept_connection(int target_socket, struct sockaddr_in addr)
 {
     int i = 0;
     int comm_socket;
     socklen_t addr_len = sizeof(addr);
 
-    fprintf(stderr, "Waiting for message.\n");
+    fprintf(stderr, "Waiting for new connection.\n");
 
     while (42)
     {
@@ -175,6 +190,22 @@ int accept_connection(int target_socket, struct sockaddr_in addr)
     }
 }
 
+//Checks if string has given prefix
+//Apparently C doesn't have a function for this
+bool strpref(char *haystack, char *prefix)
+{
+    size_t pre_len = strlen(prefix);
+    if (strncmp(haystack, prefix, pre_len) == 0)
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+}
+
 ///TODO actual hash???
 //Hash function for authorization
 unsigned int hash(unsigned int in)
@@ -182,7 +213,8 @@ unsigned int hash(unsigned int in)
     return in;
 }
 
-int my_server_protocol(int server_socket, int port, struct sockaddr_in sock_address)
+///Server-side protocol
+int my_server_protocol(int server_socket)
 {
     char *msg_buffer;
     int buffer_len = 1024;
@@ -192,7 +224,6 @@ int my_server_protocol(int server_socket, int port, struct sockaddr_in sock_addr
     ///Check hash
     /*************************************************************/
     fprintf(stderr, "Checking hash from client.\n");
-    //receive_message(server_socket, msg_buffer);
     receive_message(server_socket, msg_buffer);
 
     unsigned int number;
@@ -354,7 +385,7 @@ int my_server_protocol(int server_socket, int port, struct sockaddr_in sock_addr
         while ((passwd_file = getpwent()) != NULL)
         {
             //Login filter
-            if (strstr(passwd_file->pw_name, name_login) == NULL)
+            if (strpref(passwd_file->pw_name, name_login) == false)
             {
                 continue;
             }
@@ -403,6 +434,7 @@ int my_server_protocol(int server_socket, int port, struct sockaddr_in sock_addr
     fprintf(stderr, "Data size message sent -- sending data.\n");
 
     //Give client time to get ready
+    //If messages get sent too close together TCP may merge them
     sleep(1);
 
     //Send data
@@ -466,8 +498,8 @@ int main(int argc, char* argv[])
             int child_pid = getpid();
             close(server_socket);
             fprintf(stderr, "Starting protocol now -- handled by: %d.\n", child_pid);
-            my_server_protocol(act_socket, port, sock_address);
-            fprintf(stderr, "Protocol done -- ready for next connection -- handled by: %d.\n", child_pid);
+            my_server_protocol(act_socket);
+            fprintf(stderr, "Protocol done -- handled by: %d.\n", child_pid);
             exit(0);
         }
         else
