@@ -1,0 +1,27 @@
+IPK - Proj1 - Client-server application for user data retrieval
+Samuel Bohovic
+xbohov01@stud.fit.vutbr.cz
+
+KNOWN ISSUES
+ - Very long name given with -n and -f may cause buffer overflow and segfault.
+ - If too much data is transfered client system may run out of memory.
+ - Some variables may be uninitialized (valgrind will show error).
+ - Very rarely a child process will not end.
+ - Slow connection and a lot of data may cause client to stop reading before all data are received.
+ - Large amount of data will take a long time to transfer and may be incomplete.
+ - Sometimes server will stop responding to requests.  
+
+USAGE
+ SERVER
+ ./ipk-server -p [port number]
+
+ - Server will run until killed with ^C.
+ - NOTICE: Server waits for 1 second after sending data size to client, before data is sent.
+   This is to allow client to prepare it's buffer and so that messages don't get merged by TCP
+
+ CLIENT
+ ./ipk-client -h [host] -p[port] [-n|-f|-l] [login]
+
+ - If request is valid and server finds requested data, this data will be received.
+ - If request is invalid (client failed to authorize, no data found, invalid search parameters)
+   no data will be returned and connection closed by the server.

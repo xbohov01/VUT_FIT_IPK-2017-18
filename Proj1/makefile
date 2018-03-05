@@ -14,4 +14,5 @@ server:
 	$(CC) $(DEPS_SERVER) -o ipk-server
 
 clean:
-	rm -f ipk-client ipk-server
+	rm -f ipk-client
+	rm -f ipk-server
