@@ -29,6 +29,8 @@ typedef enum
     list
 } protocol_opt;
 
+#define DATA_LEN 256
+
 //Creates a new socket
 int get_socket()
 {
@@ -107,45 +109,49 @@ int send_msg(int dest_socket, char* msg_content)
     //Buffer for data
     //Size of data
     //Is a number expected
-int rec_msg(int src_socket, char *incoming_buffer, int exp_size, int buff_size)
+int rec_msg(int src_socket, char *incoming_buffer, int buff_size)
 {
     int msg_len = 0;
-    int len = 0;
-    int cnt = 100;
-    int num = 0;
-    for (;;)
+    int act_buff_size = buff_size;
+
+    char tmp_buffer[200];
+
+    fd_set set;
+    FD_ZERO(&set);
+    FD_SET(src_socket, &set);
+
+    struct timeval tv;
+    tv.tv_sec = 3;
+    tv.tv_usec = 0;
+    setsockopt(src_socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+
+    while(42)
     {
-        msg_len = recv(src_socket, incoming_buffer, exp_size*sizeof(char), 0);
-        if (atoi(incoming_buffer) > 0)
-        {
-            break;
-        }
-        if (msg_len < 0 && errno != EWOULDBLOCK && errno != EAGAIN)
+        memset(tmp_buffer, '\0', 200);
+        msg_len = recv(src_socket, tmp_buffer, 200, 0);
+
+        if (msg_len < 0 /*&& errno != EWOULDBLOCK && errno != EAGAIN*/)
         {
             perror("recv ");
             exit(25);
         }
-        else if (msg_len == 0)
+        if (msg_len == 0)
         {
-            cnt--;
-            if (cnt == 0)
-            {
-                fprintf(stderr, "here\n");
-                break;
-            }
-            if ((len = strlen(incoming_buffer)) == exp_size)
-            {
-                fprintf(stderr, "here>>>>\n");
-                break;
-            }
-            if (len < exp_size)
-            {
-                continue;
-            }
+            return msg_len;
+        }
+        if (strlen(incoming_buffer) + strlen(tmp_buffer) > act_buff_size)
+        {
+            act_buff_size += DATA_LEN;
+            incoming_buffer = realloc(incoming_buffer, act_buff_size);
+            strcat(incoming_buffer, tmp_buffer);
+        }
+        else
+        {
+            strcat(incoming_buffer, tmp_buffer);
         }
     }
 
-    fprintf(stderr, "DEBUG incoming_buffer >> %s\n", incoming_buffer);
+    //fprintf(stderr, "DEBUG incoming_buffer >> %s\n", incoming_buffer);
     return msg_len;
 }
 
@@ -229,28 +235,24 @@ int my_client_protocol(int client_socket, char* login, char *host, int port, pro
     ///Receive data
     /***************************************************/
     //Data size
-    msg_buffer = realloc(msg_buffer, 10*sizeof(char));
+    msg_buffer = realloc(msg_buffer, DATA_LEN*sizeof(char));
     memset(msg_buffer, '\0', 10*sizeof(char));
-
-    rec_msg(client_socket, msg_buffer, 10*sizeof(char), 10*sizeof(char));
-
-    int data_len = atoi(msg_buffer);
-
-    fprintf(stderr, "Received data length from server %d\n", data_len);
-
-    //Allocate buffer for incoming data
-    //One extra byte is for \0
-    msg_buffer = realloc(msg_buffer, (data_len+1)*sizeof(char));
-    memset(msg_buffer, '\0', (data_len+1)*sizeof(char));
 
     fprintf(stderr, "Ready for data\n");
 
     //Data
-    rec_msg(client_socket, msg_buffer, data_len, (data_len+1*sizeof(char)));
+    rec_msg(client_socket, msg_buffer, (DATA_LEN+1*sizeof(char)));
 
-    printf("%s\n", msg_buffer);
+    if (option != list)
+    {
+        printf("%s\n", msg_buffer);
+    }
+    else
+    {
+        printf("%s", msg_buffer);
+    }
 
-    fprintf(stderr, ">>>>>%lu %lu\n", strlen(msg_buffer), data_len*sizeof(char));
+    //fprintf(stderr, ">>>>>%lu %lu\n", strlen(msg_buffer), data_len*sizeof(char));
 
     close(client_socket);
     free(msg_buffer);

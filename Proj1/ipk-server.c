@@ -378,40 +378,24 @@ int my_server_protocol(int server_socket)
     }
     else if (list == true)
     {
+        char login[32];
         //Opens stream to read list of users
         setpwent();
         //Get entries
         //Returns NULL when there are no more entries
         while ((passwd_file = getpwent()) != NULL)
         {
+            memset(login, '\0', 32);
             //Login filter
             if (strpref(passwd_file->pw_name, name_login) == false)
             {
                 continue;
             }
-            //Get username
-            if (strlen(msg_buffer) == 0)
-            {
-                //Buffer is blank so first entry is copied
-                memcpy(msg_buffer, passwd_file->pw_name, strlen(passwd_file->pw_name));
-                strcat(msg_buffer, "\n");
-            }
-            else
-            {
-                //Other entries can be concatenated
-                //Have to check if buffer has enough space
-                if ((strlen(msg_buffer)+strlen(passwd_file->pw_name)) < (buffer_len*sizeof(char)))
-                {
-                    strcat(msg_buffer, passwd_file->pw_name);
-                }
-                else
-                {
-                    buffer_len += 1000;
-                    msg_buffer = realloc(msg_buffer, buffer_len*sizeof(char));
-                    strcat(msg_buffer, passwd_file->pw_name);
-                }
-                strcat(msg_buffer, "\n");
-            }
+
+            //Buffer is blank so first entry is copied
+            memcpy(login, passwd_file->pw_name, strlen(passwd_file->pw_name));
+            strcat(login, "\n");
+            send_message(server_socket, login);
 
         }
 
@@ -429,21 +413,8 @@ int my_server_protocol(int server_socket)
     memset(data_len_str, '\0', 10 * sizeof(char));
     sprintf(data_len_str, "%d", data_len);
 
-    fprintf(stderr, "Data length = %d\n", data_len);
-
-    //Send data lenght
-    send_message(server_socket, data_len_str);
-
-    fprintf(stderr, "Data size message sent -- sending data.\n");
-
-    //Give client time to get ready
-    //If messages get sent too close together TCP may merge them
-    sleep(1);
-
     //Send data
     send_message(server_socket, msg_buffer);
-
-    sleep(1);
 
     fprintf(stderr, "Data sent.\n");
 
