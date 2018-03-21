@@ -11,8 +11,11 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <errno.h>
+//Time measurement
+#include <chrono>
 
 using namespace std;
+using namespace std::chrono;
 
 void exit_handler(int code)
 {
@@ -63,20 +66,43 @@ int reflector(int port)
         //Receive
         bytesReceived = recvfrom(reflectSocket, buffer, 1024, 0, (struct sockaddr *) &meterAddr, &meterAddrLen);
         if (bytesReceived < 0) 
-            perror("ERROR: recvfrom:");
+            perror("recvfrom()");
 
         //Resolve sender
         meterHost = gethostbyaddr((const char *)&meterAddr.sin_addr.s_addr, sizeof(meterAddr.sin_addr.s_addr), AF_INET);
         meterIp = inet_ntoa(meterAddr.sin_addr);
         fprintf(stderr, "Probe from %s\n", meterIp);
+
+        //Reflect message
+        bytesSent = sendto(reflectSocket, buffer, 1024, 0, (struct sockaddr*)&meterAddr, meterAddrLen);
+        if (bytesSent < 0)
+            perror("sendto()");
     }
 
     return 0;
 }
 
+string generateProbe(int size)
+{
+    string probe = "";
+    char letters[27] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    probe.append(1, '<');
+    for (char i = 0; i < size-2; i++)
+    {
+        probe.append(1, letters[i%26]);
+    }
+    probe.append(1, '>');
+    //probe.append(1, '\n');
+
+    return probe;
+}
 
 int meter(char* host, int port, int probeSize, int testTimeout)
 {
+    //Time
+    high_resolution_clock::time_point startTime;
+    high_resolution_clock::time_point endTime;
+
     //Get UDP socket
     int meterSocket;
     meterSocket = socket(AF_INET, SOCK_DGRAM, 0);
@@ -104,22 +130,27 @@ int meter(char* host, int port, int probeSize, int testTimeout)
         fprintf(stderr, "Host %s resolved as %s\n", host, address);
     }
 
-    struct sockaddr_in server_address;
-    server_address.sin_family = AF_INET;
-    server_address.sin_port = htons(port);
-    server_address.sin_addr.s_addr = inet_addr(address);
-    memset(server_address.sin_zero, '\0', sizeof(server_address.sin_zero));
+    struct sockaddr_in reflectorAddress;
+    reflectorAddress.sin_family = AF_INET;
+    reflectorAddress.sin_port = htons(port);
+    reflectorAddress.sin_addr.s_addr = inet_addr(address);
+    memset(reflectorAddress.sin_zero, '\0', sizeof(reflectorAddress.sin_zero));
 
     //Generate probe
     fprintf(stderr, "Generating probe of size %d\n", probeSize);
-    string sendBuffer;
+    string sendBuffer = generateProbe(probeSize);
+    fprintf(stderr, "Probe: %s\n", sendBuffer.c_str());
 
     //Send
     //TODO Timer
     int bytesSent, bytesReceived;
+    socklen_t reflectAddrLen = sizeof(reflectorAddress);
 
     fprintf(stderr, "Sending probe to reflector at %s\n", address);
-    bytesSent = sendto(meterSocket, sendBuffer.c_str(), sendBuffer.length(), 0, (struct sockaddr *)&server_address, sizeof(server_address));
+
+    startTime = high_resolution_clock::now();
+
+    bytesSent = sendto(meterSocket, sendBuffer.c_str(), sendBuffer.length(), 0, (struct sockaddr *)&reflectorAddress, reflectAddrLen);
     if (bytesSent < 0)
     {
         fprintf(stderr, "%d ", errno);
@@ -129,9 +160,24 @@ int meter(char* host, int port, int probeSize, int testTimeout)
 
     //Receive reflection
     char *recBuffer;
-    recBuffer = (char*) malloc(sizeof(char)*probeSize+1);
+    recBuffer = (char*) malloc(sizeof(char)*probeSize);
 
+    bytesReceived = recvfrom(meterSocket, recBuffer, probeSize, 0, (struct sockaddr *) &reflectorAddress, &reflectAddrLen);
+    
+    endTime = high_resolution_clock::now();
+    
+    if (bytesReceived < 0)
+    {
+        perror("recvfrom()");
+        exit(1);
+    }
     //Check and process data
+    fprintf(stderr, "Reflection: %s\n", recBuffer);
+
+    //Calculate RTT
+    duration<double> roundTripTime = duration_cast<duration<double>>(endTime - startTime);
+
+    fprintf(stderr, "RTT = %f seconds\n", roundTripTime.count());
 
     //CLEANUP
     close(meterSocket);
