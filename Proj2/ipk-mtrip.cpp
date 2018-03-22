@@ -56,25 +56,26 @@ int reflector(int port)
     struct hostent *meterHost;
     char *meterIp;
     int bytesReceived, bytesSent;
+    int bufferSize = 32768;
 
-    char buffer[1024];
+    char buffer[bufferSize];
 
     //Receive and reflect
     while (42)
     {
         fprintf(stderr, "Waiting to reflect\n");
         //Receive
-        bytesReceived = recvfrom(reflectSocket, buffer, 1024, 0, (struct sockaddr *) &meterAddr, &meterAddrLen);
+        bytesReceived = recvfrom(reflectSocket, buffer, bufferSize, 0, (struct sockaddr *) &meterAddr, &meterAddrLen);
         if (bytesReceived < 0) 
             perror("recvfrom()");
 
         //Resolve sender
         meterHost = gethostbyaddr((const char *)&meterAddr.sin_addr.s_addr, sizeof(meterAddr.sin_addr.s_addr), AF_INET);
         meterIp = inet_ntoa(meterAddr.sin_addr);
-        fprintf(stderr, "Probe from %s\n", meterIp);
+        fprintf(stderr, "Probe from %s (%lu)\n", meterIp, strlen(buffer));
 
         //Reflect message
-        bytesSent = sendto(reflectSocket, buffer, 1024, 0, (struct sockaddr*)&meterAddr, meterAddrLen);
+        bytesSent = sendto(reflectSocket, buffer, bufferSize, 0, (struct sockaddr*)&meterAddr, meterAddrLen);
         if (bytesSent < 0)
             perror("sendto()");
     }
@@ -87,12 +88,13 @@ string generateProbe(int size)
     string probe = "";
     char letters[27] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     probe.append(1, '<');
-    for (char i = 0; i < size-2; i++)
+    for (int i = 0; i < size-2; i++)
     {
         probe.append(1, letters[i%26]);
+        //printf("%s >>%d<<\n", probe.c_str(), i);
     }
     probe.append(1, '>');
-    //probe.append(1, '\n');
+    probe.append(1, '\0');
 
     return probe;
 }
@@ -139,45 +141,88 @@ int meter(char* host, int port, int probeSize, int testTimeout)
     //Generate probe
     fprintf(stderr, "Generating probe of size %d\n", probeSize);
     string sendBuffer = generateProbe(probeSize);
-    fprintf(stderr, "Probe: %s\n", sendBuffer.c_str());
+    //fprintf(stderr, "Probe: %s\n", sendBuffer.c_str());
+
+    //Buffer
+    char *recBuffer;
+    recBuffer = (char*) malloc(sizeof(char)*probeSize+1);
+    memset(recBuffer, '\0', probeSize+1);
 
     //Send
     //TODO Timer
     int bytesSent, bytesReceived;
     socklen_t reflectAddrLen = sizeof(reflectorAddress);
 
-    fprintf(stderr, "Sending probe to reflector at %s\n", address);
+    //CHANGE
+    int numberOfTests = 10;
 
-    startTime = high_resolution_clock::now();
+    double rttTimes[numberOfTests];
 
-    bytesSent = sendto(meterSocket, sendBuffer.c_str(), sendBuffer.length(), 0, (struct sockaddr *)&reflectorAddress, reflectAddrLen);
-    if (bytesSent < 0)
+    //Tests
+    for (int test = 1; test <= numberOfTests; test++)
     {
-        fprintf(stderr, "%d ", errno);
-        perror("sendto()");
-        exit(1);
-    }
+        fprintf(stderr, "Test %d start\n", test);
 
-    //Receive reflection
-    char *recBuffer;
-    recBuffer = (char*) malloc(sizeof(char)*probeSize);
+        startTime = high_resolution_clock::now();
 
-    bytesReceived = recvfrom(meterSocket, recBuffer, probeSize, 0, (struct sockaddr *) &reflectorAddress, &reflectAddrLen);
-    
-    endTime = high_resolution_clock::now();
-    
-    if (bytesReceived < 0)
-    {
-        perror("recvfrom()");
-        exit(1);
-    }
+        //Send probes
+        for (int attempt = 1; attempt <= test; attempt++)
+        {
+            //fprintf(stderr, "Test %d: Sending probe (%d/%d) to reflector at %s\n", test, attempt, test, address);
+
+            bytesSent = sendto(meterSocket, sendBuffer.c_str(), sendBuffer.length(), 0, (struct sockaddr *)&reflectorAddress, reflectAddrLen);
+            if (bytesSent < 0)
+            {
+                fprintf(stderr, "%d ", errno);
+                perror("sendto()");
+                exit(1);
+            }
+
+            //Receive reflection
+            //while (strlen(recBuffer) < probeSize)
+            //{
+                bytesReceived = recvfrom(meterSocket, recBuffer, probeSize, 0, (struct sockaddr *) &reflectorAddress, &reflectAddrLen);        
+                //fprintf(stderr, "%lu\n", strlen(recBuffer));
+                if (bytesReceived < 0)
+                {
+                    perror("recvfrom()");
+                    exit(1);
+                }
+            //}
+            
+
+            if (strcmp(recBuffer, sendBuffer.c_str()) != 0)
+            {
+                //fprintf(stderr, "Message not equal\n%s\n", recBuffer);
+                fprintf(stderr, "Message not equal %lu\n", strlen(recBuffer));
+            }
+
+        }
+
+        endTime = high_resolution_clock::now();
+
+        //Calculate RTT of all probes
+        duration<double> roundTripTime = duration_cast<duration<double>>(endTime - startTime);
+
+        rttTimes[test-1] = roundTripTime.count();
+
+        fprintf(stderr, "Test %d done RTT = %f\n", test, roundTripTime.count());
+    }   
+
     //Check and process data
-    fprintf(stderr, "Reflection: %s\n", recBuffer);
 
-    //Calculate RTT
-    duration<double> roundTripTime = duration_cast<duration<double>>(endTime - startTime);
+    fprintf(stderr, "##########RESULTS##########\n");
 
-    fprintf(stderr, "RTT = %f seconds\n", roundTripTime.count());
+    //Average RTT
+    double rttSum = 0.0;
+    double averageRtt = 0.0;
+    for (int i = 0; i < numberOfTests; i++)
+    {
+        rttSum += rttTimes[i];
+    }
+    averageRtt = rttSum/numberOfTests;
+
+    fprintf(stderr, "AVERAGE RTT: %f seconds\n", averageRtt);
 
     //CLEANUP
     close(meterSocket);
