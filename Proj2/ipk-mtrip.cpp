@@ -11,6 +11,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <errno.h>
+#include <math.h>
 //Time measurement
 #include <chrono>
 
@@ -114,6 +115,14 @@ int meter(char* host, int port, int probeSize, int testTimeout)
         exit(1);
     }
 
+    //Socket timeout
+    //TODO DYNAMIC ADJUST
+    int timeoutSec = 1;
+    struct timeval tv;
+    tv.tv_sec = timeoutSec;
+    tv.tv_usec = 0;
+    setsockopt(meterSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+
     //Resolve address
     struct hostent *host_info;
     struct in_addr **address_list;
@@ -155,8 +164,10 @@ int meter(char* host, int port, int probeSize, int testTimeout)
 
     //CHANGE
     int numberOfTests = 10;
+    int failedTests = 0;
+    int firstFailed = 0;
 
-    double rttTimes[numberOfTests];
+    double rtt[numberOfTests];
 
     //Tests
     for (int test = 1; test <= numberOfTests; test++)
@@ -164,6 +175,9 @@ int meter(char* host, int port, int probeSize, int testTimeout)
         fprintf(stderr, "Test %d start\n", test);
 
         startTime = high_resolution_clock::now();
+
+        bool secondChance = false;
+        bool failedTest = false;
 
         //Send probes
         for (int attempt = 1; attempt <= test; attempt++)
@@ -178,23 +192,48 @@ int meter(char* host, int port, int probeSize, int testTimeout)
                 exit(1);
             }
 
+            //TODO FD timeout
             //Receive reflection
-            //while (strlen(recBuffer) < probeSize)
-            //{
-                bytesReceived = recvfrom(meterSocket, recBuffer, probeSize, 0, (struct sockaddr *) &reflectorAddress, &reflectAddrLen);        
-                //fprintf(stderr, "%lu\n", strlen(recBuffer));
-                if (bytesReceived < 0)
+            bytesReceived = recvfrom(meterSocket, recBuffer, probeSize, 0, (struct sockaddr *) &reflectorAddress, &reflectAddrLen);        
+            if (bytesReceived < 0)
+            {
+                if (errno != EAGAIN && errno != EWOULDBLOCK)
                 {
                     perror("recvfrom()");
                     exit(1);
                 }
-            //}
-            
+                else 
+                {
+                    if (secondChance == false)
+                    {
+                        fprintf(stderr, "Test %d: packet failed. Giving second chance.\n", test);
+                        secondChance = true;
+                        continue;
+                    }
+                    else
+                    {
+                        failedTest = true;
+                        failedTests++;
+                        if (firstFailed == 0)
+                        {
+                            firstFailed = test;
+                        }
+                        fprintf(stderr, "Test %d: packet failed. No second chance, aborting.\n", test);
+                        break;
+                    }
+                    
+                }
+                
+            }
 
+            //If reflected message is not the same it means the probe has failed
             if (strcmp(recBuffer, sendBuffer.c_str()) != 0)
             {
-                //fprintf(stderr, "Message not equal\n%s\n", recBuffer);
                 fprintf(stderr, "Message not equal %lu\n", strlen(recBuffer));
+                if (firstFailed == 0)
+                {
+                    firstFailed = test;
+                }
             }
 
         }
@@ -202,27 +241,97 @@ int meter(char* host, int port, int probeSize, int testTimeout)
         endTime = high_resolution_clock::now();
 
         //Calculate RTT of all probes
+        //Correction for failure timeout
         duration<double> roundTripTime = duration_cast<duration<double>>(endTime - startTime);
-
-        rttTimes[test-1] = roundTripTime.count();
-
-        fprintf(stderr, "Test %d done RTT = %f\n", test, roundTripTime.count());
+        if (secondChance == true)
+        {
+            rtt[test-1] = roundTripTime.count();
+            rtt[test-1] -= timeoutSec * 1.0;
+            if (failedTest == true)
+            {
+                rtt[test-1] -= timeoutSec * 1.0;
+            }
+        }
+        else
+        {
+            rtt[test-1] = roundTripTime.count();
+        }
+        
+        fprintf(stderr, "Test %d done RTT = %f\n", test, rtt[test-1]);
     }   
 
     //Check and process data
 
     fprintf(stderr, "##########RESULTS##########\n");
 
-    //Average RTT
-    double rttSum = 0.0;
-    double averageRtt = 0.0;
-    for (int i = 0; i < numberOfTests; i++)
+    if ((failedTests+1) == numberOfTests)
     {
-        rttSum += rttTimes[i];
+        fprintf(stderr, "All tests seem to have failed, check connection.\n");
     }
-    averageRtt = rttSum/numberOfTests;
+    else
+    {
+        //Average RTT
+        double rttSum = 0.0;
+        double averageRtt = 0.0;
+        for (int i = 0; i < numberOfTests; i++)
+        {
+            rttSum += rtt[i];
+        }
+        averageRtt = rttSum/numberOfTests;
 
-    fprintf(stderr, "AVERAGE RTT: %f seconds\n", averageRtt);
+        fprintf(stderr, "AVERAGE RTT: %f seconds\n", averageRtt);
+
+        //Number of bytes in message + UDP header
+        int sizeOfAttempt = probeSize * sizeof(char) + 8;
+        
+        //Because it goes around??
+        //sizeOfAttempt *= 2;
+
+        //Avg speed
+        double mbits[numberOfTests];
+        double speed[numberOfTests];
+        double speedSum = 0.0;
+
+        int limit;
+        if (firstFailed > 0)
+        {
+            limit = firstFailed;
+        }
+        else
+        {
+            limit = numberOfTests;
+        }
+
+        for (int i = 1; i <= limit; i++)
+        {
+            int sizeOfTest = sizeOfAttempt * i;
+            sizeOfTest *= 8;
+            mbits[i-1] = sizeOfTest / 1000000.0;
+            speed[i-1] = mbits[i-1] / rtt[i-1];
+            speedSum += speed[i-1];
+        }
+        double avgSpeed = speedSum / limit;
+        fprintf(stderr, "AVG SPEED: %f Mbits/s\n", avgSpeed);
+
+        //Min speed
+        //Shouldn't this be 0 Mbits/s???
+        fprintf(stderr, "MIN SPEED: %f Mbits/s\n", speed[0]);
+
+        //Max speed
+        fprintf(stderr, "MAX SPEED: %f Mbits/s\n", speed[limit-1]);
+
+        //Standard deviation
+        //Variance
+        double variance = 0.0;
+        for (int i = 0; i < limit; i++)
+        {
+            double difference = speed[i] - avgSpeed;
+            variance += difference * difference;
+        }
+        variance /= limit;
+        double stdDeviation = sqrt(variance);
+        fprintf(stderr, "STD DEVIATION: %f \n", stdDeviation);
+    }
 
     //CLEANUP
     close(meterSocket);
