@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <algorithm> 
 #include <iostream>
 #include <string.h>
 #include <ctype.h>
@@ -100,6 +101,23 @@ string generateProbe(int size)
     return probe;
 }
 
+//Calculates how many test iterations fit into given timeout
+int calculateTestSet(int timeout)
+{
+    fprintf(stderr, "Calculating test iterations for %d second time limit\n", timeout);
+    int tests = 1;
+    int iterations = 1;
+    for (iterations; tests < timeout; iterations++)
+    {
+        tests += iterations;
+    }
+    //Correct for the last loop
+    tests -= iterations;
+    iterations -= 2;
+    fprintf(stderr, "%d tests in %d iterations for %d second time limit\n", tests, iterations, timeout);
+    return iterations;
+}
+
 int meter(char* host, int port, int probeSize, int testTimeout)
 {
     //Time
@@ -117,7 +135,7 @@ int meter(char* host, int port, int probeSize, int testTimeout)
 
     //Socket timeout
     //TODO DYNAMIC ADJUST
-    int timeoutSec = 1;
+    int timeoutSec = round(testTimeout / 55);
     struct timeval tv;
     tv.tv_sec = timeoutSec;
     tv.tv_usec = 0;
@@ -163,7 +181,7 @@ int meter(char* host, int port, int probeSize, int testTimeout)
     socklen_t reflectAddrLen = sizeof(reflectorAddress);
 
     //CHANGE
-    int numberOfTests = 10;
+    int numberOfTests = calculateTestSet(testTimeout);
     int failedTests = 0;
     int firstFailed = 0;
 
@@ -192,7 +210,6 @@ int meter(char* host, int port, int probeSize, int testTimeout)
                 exit(1);
             }
 
-            //TODO FD timeout
             //Receive reflection
             bytesReceived = recvfrom(meterSocket, recBuffer, probeSize, 0, (struct sockaddr *) &reflectorAddress, &reflectAddrLen);        
             if (bytesReceived < 0)
@@ -285,7 +302,7 @@ int meter(char* host, int port, int probeSize, int testTimeout)
         int sizeOfAttempt = probeSize * sizeof(char) + 8;
         
         //Because it goes around??
-        //sizeOfAttempt *= 2;
+        sizeOfAttempt *= 2;
 
         //Avg speed
         double mbits[numberOfTests];
@@ -318,7 +335,18 @@ int meter(char* host, int port, int probeSize, int testTimeout)
         fprintf(stderr, "MIN SPEED: %f Mbits/s\n", speed[0]);
 
         //Max speed
-        fprintf(stderr, "MAX SPEED: %f Mbits/s\n", speed[limit-1]);
+        //If something failed then the previous is the best
+        //If nothing failed find the max
+        if (firstFailed > 0)
+        {
+             fprintf(stderr, "MAX SPEED: %f Mbits/s\n", speed[limit-1]);
+        }  
+        else
+        {
+            double max = 0.0;
+            max = *std::max_element(speed, speed+numberOfTests);
+            fprintf(stderr, "MAX SPEED: %f Mbits/s\n", max);
+        }   
 
         //Standard deviation
         //Variance
@@ -392,6 +420,15 @@ int main(int argc, char* argv[])
         int port = stoi(portString);
         int size = stoi(sizeString);
         int timeout = stoi(timeoutString);
+
+        if (size > 32768)
+        {
+            cerr << "WARNING: Probe size you set is higher than 32768, which may cause tests to fail.\nConsider using smaller size\n";
+        }
+        if (timeout < 55)
+        {
+            cerr << "WARNING: The timeout for measurement you set is too short, which may cause inaccurate results.\nRecommended timeout is 60 seconds.\n";
+        }
 
         rv = meter(host, port, size, timeout);
     }

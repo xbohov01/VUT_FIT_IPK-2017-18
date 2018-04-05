@@ -1,5 +1,5 @@
 CC=g++
-CFLAGS= -std=c++11 -lm -I -O3.
+CFLAGS= -std=c++11 -lm -I -O3. -static-libstdc++
 DEPS = ipk-mtrip.cpp
 
 
