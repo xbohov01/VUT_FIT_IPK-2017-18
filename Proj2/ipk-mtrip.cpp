@@ -135,7 +135,8 @@ int meter(char* host, int port, int probeSize, int testTimeout)
 
     //Socket timeout
     //TODO DYNAMIC ADJUST
-    int timeoutSec = round(testTimeout / 55);
+    //int timeoutSec = round(testTimeout / 55);
+    int timeoutSec = 1;
     struct timeval tv;
     tv.tv_sec = timeoutSec;
     tv.tv_usec = 0;
