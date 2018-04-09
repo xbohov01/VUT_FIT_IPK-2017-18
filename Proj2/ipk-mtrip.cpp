@@ -332,8 +332,9 @@ int meter(char* host, int port, int probeSize, int testTimeout)
         fprintf(stderr, "AVG SPEED: %f Mbits/s\n", avgSpeed);
 
         //Min speed
-        //Shouldn't this be 0 Mbits/s???
-        fprintf(stderr, "MIN SPEED: %f Mbits/s\n", speed[0]);
+        double min = 0.0;
+        min = *std::min_element(speed, speed+numberOfTests);
+        fprintf(stderr, "MIN SPEED: %f Mbits/s\n", min);
 
         //Max speed
         //If something failed then the previous is the best
